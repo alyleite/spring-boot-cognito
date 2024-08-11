@@ -1,0 +1,37 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: cognito-teste
+  security:
+    oauth2:
+      client:
+        registration:
+          cognito:
+            client-id:
+            client-secret:
+            scope: openid
+        provider:
+          cognito:
+            issuer-uri:
+
+aws:
+  cognito:
+    access-key:
+    secret-access-key:
+    default-region: us-east-2
+    client-id:
+    user-pool-id:
+    user-pool-name:
+    connection-timeout: 3000
+    read-timeout: 3000
+    jwk:
+
+logging:
+  level:
+    org:
+      springframework: INFO
+    com:
+      simform: INFO
+  pattern:
+    console: "%d{dd-MM-yyyy HH:mm:ss} - %msg%n"
