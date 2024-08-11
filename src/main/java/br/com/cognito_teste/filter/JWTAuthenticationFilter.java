@@ -1,18 +1,12 @@
 package br.com.cognito_teste.filter;
 
-import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.JWSObject;
-import com.nimbusds.jose.JWSVerifier;
-import com.nimbusds.jose.Payload;
-import com.nimbusds.jose.crypto.RSASSAVerifier;
-import com.nimbusds.jose.jwk.JWK;
-import com.nimbusds.jose.jwk.JWKSet;
+import br.com.cognito_teste.util.JwtUtil;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -20,12 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.URL;
-import java.security.interfaces.RSAPublicKey;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -35,8 +24,9 @@ import java.util.Map;
 @Component
 public class JWTAuthenticationFilter extends OncePerRequestFilter {
 
-    @Value("${aws.cognito.jwk}")
-    private String jwk;
+
+    @Autowired
+    private JwtUtil jwtUtil;
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/users/sign-up",
@@ -60,28 +50,18 @@ public class JWTAuthenticationFilter extends OncePerRequestFilter {
             if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
                 accessToken = authorizationHeader.substring("Bearer ".length());
                 try {
-                    JWKSet jwkSet = fetchJWKSet();
-                    JWSObject jwsObject = JWSObject.parse(accessToken);
-                    JWSHeader header = jwsObject.getHeader();
-                    JWK jwk = jwkSet.getKeyByKeyId(header.getKeyID());
-                    if (jwk != null) {
-                        JWSVerifier verifier = new RSASSAVerifier((RSAPublicKey) jwk.toRSAKey().toPublicKey());
-                        if (jwsObject.verify(verifier)) {
-                            Payload payload = jwsObject.getPayload();
-                            Map<String, Object> map = payload.toJSONObject();
-                            Date expirationTime = map.get("exp") != null ? new Date((long) map.get("exp") * 1000) : null;
-                            if (expirationTime != null && expirationTime.before(new Date())) {
-                                response.sendError(401, "Unauthorized");
-                            }
-                            String username = (String) map.get("sub");
-                            List<GrantedAuthority> authorities = new ArrayList<>();
-                            authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
-                            UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(username, null, authorities);
-                            SecurityContextHolder.getContext().setAuthentication(authenticationToken);
-                            filterChain.doFilter(request, response);
-                        } else {
+                    Map<String, Object> map = jwtUtil.getValueFromJwt(accessToken);
+                    if (map != null) {
+                        Date expirationTime = map.get("exp") != null ? new Date((long) map.get("exp") * 1000) : null;
+                        if (expirationTime != null && expirationTime.before(new Date())) {
                             response.sendError(401, "Unauthorized");
                         }
+                        String username = (String) map.get("sub");
+                        List<GrantedAuthority> authorities = new ArrayList<>();
+                        authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+                        UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(username, null, authorities);
+                        SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                        filterChain.doFilter(request, response);
                     } else {
                         response.sendError(401, "Unauthorized");
                     }
@@ -93,17 +73,5 @@ public class JWTAuthenticationFilter extends OncePerRequestFilter {
                 response.sendError(401, "Unauthorized");
             }
         }
-    }
-
-    private JWKSet fetchJWKSet() throws Exception {
-        URL jwkSetURL = new URL(jwk);
-        InputStream inputStream = jwkSetURL.openStream();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-        StringBuilder jwkSetString = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            jwkSetString.append(line);
-        }
-        return JWKSet.parse(jwkSetString.toString());
     }
 }

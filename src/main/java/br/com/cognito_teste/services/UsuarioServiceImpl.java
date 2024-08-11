@@ -4,31 +4,42 @@ import br.com.cognito_teste.dto.CadastroDto;
 import br.com.cognito_teste.dto.CadastroResponseDto;
 import br.com.cognito_teste.dto.LoginDto;
 import br.com.cognito_teste.util.ApiResponse;
+import br.com.cognito_teste.util.JwtUtil;
 import br.com.cognito_teste.util.Mensagem;
 import com.amazonaws.services.cognitoidp.AWSCognitoIdentityProvider;
 import com.amazonaws.services.cognitoidp.model.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 @Service
 @Slf4j
-public class UsuarioServiceImpl implements UsuarioService {
+public class UsuarioServiceImpl implements UsuarioService, UserDetailsService {
     private final AWSCognitoIdentityProvider provider;
 
     @Value("${aws.cognito.user-pool-id}")
     private String userPoolId;
-    @Value("${aws.cognito.user-pool-name}")
-    private String userPoolName;
+    @Value("${aws.cognito.group-user-sacado}")
+    private String grupoSacado;
     @Value("${aws.cognito.client-id}")
     private String clientId;
 
-    public UsuarioServiceImpl(AWSCognitoIdentityProvider provider) {
+    private final JwtUtil jwtUtil;
+
+
+    public UsuarioServiceImpl(AWSCognitoIdentityProvider provider, JwtUtil jwtUtil) {
         this.provider = provider;
+        this.jwtUtil = jwtUtil;
     }
 
     @Override
@@ -52,7 +63,7 @@ public class UsuarioServiceImpl implements UsuarioService {
 
             if (createUserResult.getSdkHttpMetadata().getHttpStatusCode() == HttpStatus.OK.value()) {
                 provider.adminAddUserToGroup(new AdminAddUserToGroupRequest()
-                        .withGroupName(userPoolName)
+                        .withGroupName(grupoSacado)
                         .withUserPoolId(userPoolId) // use environment variable
                         .withUsername(userRequest.getUsername()));
 
@@ -98,12 +109,12 @@ public class UsuarioServiceImpl implements UsuarioService {
     public ApiResponse login(LoginDto signInDto) {
         ApiResponse apiResponse;
 
-        Map<String, String> userDetails = new HashMap<>();
+         Map<String, String> userDetails = new HashMap<>();
         userDetails.put("USERNAME", signInDto.getEmail());
-        //userDetails.put("PASSWORD", signInDto.getSenha());
+        userDetails.put("PASSWORD", signInDto.getSenha());
 
         AdminInitiateAuthRequest authRequest = new AdminInitiateAuthRequest()
-                .withAuthFlow(AuthFlowType.ADMIN_NO_SRP_AUTH)
+                .withAuthFlow(AuthFlowType.ADMIN_USER_PASSWORD_AUTH)
                 .withUserPoolId(userPoolId)
                 .withClientId(clientId)
                 .withAuthParameters(userDetails);
@@ -114,29 +125,17 @@ public class UsuarioServiceImpl implements UsuarioService {
             AuthenticationResultType authenticationResultType;
 
             if (authResult.getSdkHttpMetadata().getHttpStatusCode() == HttpStatus.OK.value()) {
+                authenticationResultType = authResult.getAuthenticationResult();
 
-                if (ChallengeNameType.PASSWORD_VERIFIER.toString().equals(authResult.getChallengeName())) {
-                    authenticationResultType = authResult.getAuthenticationResult();
+                var cadastroResponse = getCadastroResponse(authenticationResultType);
 
-                    var cadastroResponse = getCadastroResponse(authenticationResultType);
-
-                    apiResponse = ApiResponse
-                            .builder()
-                            .status(false)
-                            .data(cadastroResponse)
-                            .message(Mensagem.SIGN_IN)
-                            .statusCode(HttpStatus.OK.value())
-                            .build();
-                } else {
-                    apiResponse = ApiResponse
-                            .builder()
-                            .status(false)
-                            .data(null)
-                            .message(Mensagem.RETRY)
-                            .statusCode(HttpStatus.BAD_REQUEST.value())
-                            .build();
-
-                }
+                apiResponse = ApiResponse
+                        .builder()
+                        .status(false)
+                        .data(cadastroResponse)
+                        .message(Mensagem.SIGN_IN)
+                        .statusCode(HttpStatus.OK.value())
+                        .build();
             } else {
                 apiResponse = ApiResponse
                         .builder()
@@ -168,5 +167,36 @@ public class UsuarioServiceImpl implements UsuarioService {
                 .expirationTime(result.getExpiresIn())
                 .tokenType(result.getTokenType())
                 .build();
+    }
+
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        Map<String, String> userDetails = new HashMap<>();
+        userDetails.put("USERNAME", username);
+
+        AdminInitiateAuthRequest authRequest = new AdminInitiateAuthRequest()
+                .withAuthFlow(AuthFlowType.ADMIN_NO_SRP_AUTH)
+                .withAuthParameters(userDetails)
+                .withUserPoolId(userPoolId)
+                .withClientId(clientId);
+
+        AdminInitiateAuthResult authResult = provider.adminInitiateAuth(authRequest);
+
+        if (authResult.getSdkHttpMetadata().getHttpStatusCode() == HttpStatus.OK.value()) {
+            try {
+                var map = jwtUtil.getValueFromJwt(authResult.getAuthenticationResult().getAccessToken());
+                String email = (String) map.get("sub");
+                return new User(email, username,
+                        true, true, true, true,
+                        Collections.singleton(new SimpleGrantedAuthority("ROLE_USER"))
+                );
+            } catch (Exception e) {
+                throw new UsernameNotFoundException("Authentication failed");
+            }
+
+        } else {
+            // Handle authentication failure
+            throw new UsernameNotFoundException("Authentication failed");
+        }
     }
 }

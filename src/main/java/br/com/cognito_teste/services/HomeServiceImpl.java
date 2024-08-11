@@ -11,8 +11,8 @@ public class HomeServiceImpl implements HomeService {
     public ApiResponse getData(HttpServletRequest request) {
         return ApiResponse
                 .builder()
-                .data("Hi")
-                .message("Data fetched")
+                .data("Olá")
+                .message("Tudo certo")
                 .statusCode(HttpStatus.OK.value())
                 .status(false)
                 .build();
